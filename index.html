@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Breathwork Box 4-7-8 Visualizer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #breathCircle {
+    transition: transform 0.8s ease, background-color 1s ease, box-shadow 1s ease;
+  }
+  body { background: #0f172a; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start font-sans text-white" style="background:#0f172a">
+<div class="w-full max-w-lg px-4 py-8">
+  <h1 class="text-2xl font-bold text-center text-white mb-1">Breathwork Visualizer</h1>
+  <p class="text-center text-slate-400 text-sm mb-6">Choose a pattern and breathe with the circle.</p>
+
+  <!-- Pattern selector -->
+  <div class="flex gap-2 justify-center mb-8 flex-wrap">
+    <button onclick="selectPattern('box')" id="btnBox" class="px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white" aria-label="Box breathing pattern 4-4-4-4">Box (4-4-4-4)</button>
+    <button onclick="selectPattern('478')" id="btn478" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-700 text-slate-300" aria-label="4-7-8 breathing pattern">4-7-8</button>
+    <button onclick="selectPattern('wim')" id="btnWim" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-700 text-slate-300" aria-label="Wim Hof breathing pattern">Wim Hof</button>
+  </div>
+
+  <!-- Wim Hof cycle display -->
+  <div id="wimInfo" class="hidden text-center text-slate-300 text-sm mb-4">
+    <span id="wimCycleLabel">Cycle 1 of 30</span>
+  </div>
+
+  <!-- Animated circle -->
+  <div class="flex flex-col items-center justify-center mb-8">
+    <div class="relative flex items-center justify-center" style="width:220px;height:220px">
+      <div id="breathCircle" class="rounded-full flex items-center justify-center" style="width:120px;height:120px;background:#3b82f6;box-shadow:0 0 40px #3b82f6aa;">
+        <div class="text-center">
+          <div id="phaseLabel" class="text-white font-bold text-lg leading-none">Inhale</div>
+          <div id="phaseCountdown" class="text-white text-sm opacity-80 mt-1">4s</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session timer -->
+  <div class="text-center text-slate-300 text-sm mb-6">
+    Session: <span id="sessionTimer" class="font-mono font-bold text-white">0:00</span>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex gap-3 justify-center mb-8">
+    <button id="btnStart" onclick="startSession()" class="px-6 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold text-sm" aria-label="Start breathing session">Start</button>
+    <button id="btnStop" onclick="stopSession()" class="px-6 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-semibold text-sm hidden" aria-label="Stop breathing session">Stop</button>
+  </div>
+
+  <!-- Session log -->
+  <div class="bg-slate-800 rounded-xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">Session Log</h2>
+      <button onclick="clearLog()" class="text-xs text-red-400 hover:text-red-300" aria-label="Clear session log">Clear</button>
+    </div>
+    <div id="logArea" class="space-y-1 max-h-48 overflow-y-auto">
+      <p class="text-slate-500 text-xs italic">No sessions yet.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const LS_KEY = 'breathwork_log';
+const PATTERNS = {
+  box: {
+    name: 'Box (4-4-4-4)',
+    phases: [
+      { label: 'Inhale',  duration: 4, color: '#3b82f6', shadow: '#3b82f6aa', scale: 1.8 },
+      { label: 'Hold',    duration: 4, color: '#8b5cf6', shadow: '#8b5cf6aa', scale: 1.8 },
+      { label: 'Exhale',  duration: 4, color: '#10b981', shadow: '#10b981aa', scale: 1.0 },
+      { label: 'Hold',    duration: 4, color: '#8b5cf6', shadow: '#8b5cf6aa', scale: 1.0 },
+    ]
+  },
+  '478': {
+    name: '4-7-8',
+    phases: [
+      { label: 'Inhale',  duration: 4, color: '#3b82f6', shadow: '#3b82f6aa', scale: 1.8 },
+      { label: 'Hold',    duration: 7, color: '#8b5cf6', shadow: '#8b5cf6aa', scale: 1.8 },
+      { label: 'Exhale',  duration: 8, color: '#10b981', shadow: '#10b981aa', scale: 1.0 },
+    ]
+  },
+  wim: {
+    name: 'Wim Hof',
+    phases: [
+      { label: 'Deep Inhale', duration: 2, color: '#3b82f6', shadow: '#3b82f6aa', scale: 1.8 },
+      { label: 'Release',     duration: 2, color: '#10b981', shadow: '#10b981aa', scale: 1.0 },
+    ],
+    cycleCount: 30,
+    holdPhase: { label: 'Hold Breath', duration: 15, color: '#f59e0b', shadow: '#f59e0baa', scale: 1.4 },
+    holdAfterPhase: { label: 'Inhale & Hold', duration: 15, color: '#8b5cf6', shadow: '#8b5cf6aa', scale: 1.8 },
+  }
+};
+
+let currentPattern = 'box';
+let isRunning = false;
+let sessionStart = null;
+let sessionInterval = null;
+let phaseInterval = null;
+let currentPhaseIndex = 0;
+let phaseCountdown = 0;
+let wimCycle = 0;
+let wimMode = 'cycles'; // 'cycles' | 'hold' | 'afterhold'
+
+function selectPattern(p) {
+  if (isRunning) return;
+  currentPattern = p;
+  const btns = { box: 'btnBox', '478': 'btn478', wim: 'btnWim' };
+  Object.keys(btns).forEach(k => {
+    document.getElementById(btns[k]).className = k === p
+      ? 'px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white'
+      : 'px-4 py-2 rounded-xl text-sm font-semibold bg-slate-700 text-slate-300';
+  });
+  document.getElementById('wimInfo').classList.toggle('hidden', p !== 'wim');
+  resetCircle();
+}
+
+function resetCircle() {
+  const circle = document.getElementById('breathCircle');
+  circle.style.transform = 'scale(1)';
+  circle.style.backgroundColor = '#3b82f6';
+  circle.style.boxShadow = '0 0 40px #3b82f6aa';
+  document.getElementById('phaseLabel').textContent = 'Ready';
+  document.getElementById('phaseCountdown').textContent = '';
+}
+
+function applyPhase(phase) {
+  const circle = document.getElementById('breathCircle');
+  circle.style.transform = `scale(${phase.scale})`;
+  circle.style.backgroundColor = phase.color;
+  circle.style.boxShadow = `0 0 60px ${phase.shadow}`;
+  document.getElementById('phaseLabel').textContent = phase.label;
+  document.getElementById('phaseCountdown').textContent = phase.duration + 's';
+  phaseCountdown = phase.duration;
+}
+
+function startSession() {
+  if (isRunning) return;
+  isRunning = true;
+  sessionStart = Date.now();
+  wimCycle = 0;
+  wimMode = 'cycles';
+  currentPhaseIndex = 0;
+  document.getElementById('btnStart').classList.add('hidden');
+  document.getElementById('btnStop').classList.remove('hidden');
+
+  sessionInterval = setInterval(updateSessionTimer, 1000);
+  runPhase();
+}
+
+function stopSession() {
+  if (!isRunning) return;
+  isRunning = false;
+  clearInterval(sessionInterval);
+  clearInterval(phaseInterval);
+  document.getElementById('btnStart').classList.remove('hidden');
+  document.getElementById('btnStop').classList.add('hidden');
+
+  const duration = Math.floor((Date.now() - sessionStart) / 1000);
+  if (duration > 3) {
+    logSession(currentPattern, duration);
+  }
+  resetCircle();
+  document.getElementById('sessionTimer').textContent = '0:00';
+}
+
+function updateSessionTimer() {
+  const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  document.getElementById('sessionTimer').textContent = m + ':' + String(s).padStart(2, '0');
+}
+
+function runPhase() {
+  if (!isRunning) return;
+  const pattern = PATTERNS[currentPattern];
+  let phase;
+
+  if (currentPattern === 'wim') {
+    if (wimMode === 'cycles') {
+      if (wimCycle >= pattern.cycleCount) {
+        wimMode = 'hold';
+        wimCycle = 0;
+        currentPhaseIndex = 0;
+        phase = pattern.holdPhase;
+        document.getElementById('wimCycleLabel').textContent = 'Breath Hold';
+      } else {
+        phase = pattern.phases[currentPhaseIndex % pattern.phases.length];
+        if (currentPhaseIndex % pattern.phases.length === pattern.phases.length - 1) wimCycle++;
+        currentPhaseIndex++;
+        document.getElementById('wimCycleLabel').textContent = 'Cycle ' + Math.min(wimCycle + 1, pattern.cycleCount) + ' of ' + pattern.cycleCount;
+      }
+    } else if (wimMode === 'hold') {
+      wimMode = 'afterhold';
+      phase = pattern.holdAfterPhase;
+      document.getElementById('wimCycleLabel').textContent = 'Recovery Hold';
+    } else {
+      wimMode = 'cycles';
+      wimCycle = 0;
+      currentPhaseIndex = 0;
+      phase = pattern.phases[0];
+      document.getElementById('wimCycleLabel').textContent = 'Round 2 - Cycle 1 of ' + pattern.cycleCount;
+    }
+  } else {
+    phase = pattern.phases[currentPhaseIndex % pattern.phases.length];
+    currentPhaseIndex++;
+  }
+
+  applyPhase(phase);
+  let remaining = phase.duration;
+
+  phaseInterval = setInterval(() => {
+    remaining--;
+    document.getElementById('phaseCountdown').textContent = remaining + 's';
+    if (remaining <= 0) {
+      clearInterval(phaseInterval);
+      if (isRunning) runPhase();
+    }
+  }, 1000);
+}
+
+function logSession(pattern, durationSec) {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch(e) {}
+  const entry = {
+    date: new Date().toISOString(),
+    pattern: PATTERNS[pattern].name,
+    duration: durationSec
+  };
+  log.unshift(entry);
+  if (log.length > 50) log = log.slice(0, 50);
+  localStorage.setItem(LS_KEY, JSON.stringify(log));
+  renderLog();
+}
+
+function clearLog() {
+  localStorage.removeItem(LS_KEY);
+  renderLog();
+}
+
+function renderLog() {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch(e) {}
+  const logArea = document.getElementById('logArea');
+  logArea.innerHTML = '';
+  if (log.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-slate-500 text-xs italic';
+    p.textContent = 'No sessions yet.';
+    logArea.appendChild(p);
+    return;
+  }
+  log.forEach(entry => {
+    const d = new Date(entry.date);
+    const dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const m = Math.floor(entry.duration / 60);
+    const s = entry.duration % 60;
+    const durStr = m > 0 ? `${m}m ${s}s` : `${s}s`;
+
+    const row = document.createElement('div');
+    row.className = 'flex justify-between text-xs text-slate-400 py-0.5 border-b border-slate-700';
+
+    const left = document.createElement('span');
+    left.textContent = dateStr + ' – ' + entry.pattern;
+
+    const right = document.createElement('span');
+    right.className = 'text-slate-300';
+    right.textContent = durStr;
+
+    row.appendChild(left);
+    row.appendChild(right);
+    logArea.appendChild(row);
+  });
+}
+
+renderLog();
+</script>
+</body>
+</html>
